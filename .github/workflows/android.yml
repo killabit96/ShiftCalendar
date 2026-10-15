@@ -37,7 +37,11 @@ jobs:
         run: |
           unzip -q ShiftCalendar-Android-Project.zip
           test -f ShiftCalendar/app/build.gradle.kts
-
+          
+      - name: Fix widget description
+        run: |
+          sed -i 's|android:description="Месячный календарь смен"|android:description="@string/app_name"|' ShiftCalendar/app/src/main/res/xml/month_widget_info.xml
+          
       - name: Build APK
         run: |
           cd ShiftCalendar
