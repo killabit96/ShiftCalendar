@@ -35,12 +35,7 @@ jobs:
 
       - name: Extract project
         run: |
-          echo "ZIP archive contents:"
-          unzip -l ShiftCalendar-Android-Project.zip | head -100
           unzip -oq ShiftCalendar-Android-Project.zip -d extracted
-
-          echo "Searching for Gradle project..."
-          find extracted -type f \( -name 'build.gradle' -o -name 'build.gradle.kts' \)
 
           APP_GRADLE="$(find extracted -type f -path '*/app/build.gradle.kts' -print -quit)"
           if [ -z "$APP_GRADLE" ]; then
@@ -48,37 +43,72 @@ jobs:
           fi
 
           if [ -z "$APP_GRADLE" ]; then
-            echo "ERROR: Android app Gradle file not found."
+            echo "ERROR: app Gradle file not found"
             find extracted -maxdepth 6 -type f | head -200
             exit 1
           fi
 
           PROJECT_DIR="$(dirname "$(dirname "$APP_GRADLE")")"
-          echo "Project directory: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project: $PROJECT_DIR"
 
       - name: Fix widget description
         run: |
           FILE="$(find "$PROJECT_DIR" -type f -name 'month_widget_info.xml' -print -quit)"
-
-          if [ -z "$FILE" ]; then
-            echo "Widget XML not found. Searching XML files:"
-            find "$PROJECT_DIR" -type f -name '*.xml' | head -100
-            exit 1
+          if [ -n "$FILE" ]; then
+            sed -i 's|android:description="[^"]*"|android:description="@string/widget_description"|' "$FILE"
+            RES_DIR="$(dirname "$(dirname "$FILE")")"
+            mkdir -p "$RES_DIR/values"
+            printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > "$RES_DIR/values/widget_strings.xml"
           fi
 
-          echo "Found widget file: $FILE"
+      - name: Fix JVM targets
+        run: |
+          python3 - "$PROJECT_DIR" <<'PY'
+          import pathlib
+          import re
+          import sys
 
-          sed -i 's|android:description="[^"]*"|android:description="@string/widget_description"|' "$FILE"
+          root = pathlib.Path(sys.argv[1])
+          files = list(root.rglob("build.gradle")) + list(root.rglob("build.gradle.kts"))
 
-          RES_DIR="$(dirname "$(dirname "$FILE")")"
-          VALUES_DIR="$RES_DIR/values"
-          mkdir -p "$VALUES_DIR"
+          for path in files:
+              text = path.read_text(encoding="utf-8")
+              original = text
 
-          printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > "$VALUES_DIR/widget_strings.xml"
+              text = re.sub(
+                  r'(?m)^(\s*sourceCompatibility\s*=\s*)JavaVersion\.VERSION_1_8\b',
+                  r'\1JavaVersion.VERSION_17',
+                  text
+              )
+              text = re.sub(
+                  r'(?m)^(\s*targetCompatibility\s*=\s*)JavaVersion\.VERSION_1_8\b',
+                  r'\1JavaVersion.VERSION_17',
+                  text
+              )
+              text = re.sub(
+                  r'(?m)^(\s*sourceCompatibility\s*=\s*)JavaVersion\.VERSION_1_8\b',
+                  r'\1JavaVersion.VERSION_17',
+                  text
+              )
 
-          echo "Updated description:"
-          grep 'android:description=' "$FILE"
+              if path.name == "build.gradle.kts":
+                  text = re.sub(
+                      r'(?m)^(\s*jvmTarget\s*=\s*)"1\.8"',
+                      r'\1"17"',
+                      text
+                  )
+              else:
+                  text = re.sub(
+                      r'(?m)^(\s*jvmTarget\s*=\s*)["\']1\.8["\']',
+                      r'\1"17"',
+                      text
+                  )
+
+              if text != original:
+                  path.write_text(text, encoding="utf-8")
+                  print("Updated JVM settings in", path)
+          PY
 
       - name: Build APK
         run: |
