@@ -33,12 +33,20 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
       
+      
       - name: Fix widget description
         run: |
-          FILE="ShiftCalendar/app/src/main/res/xml/month_widget_info.xml"
+          FILE="$(find . -type f -name 'month_widget_info.xml' -print -quit)"
+          if [ -z "$FILE" ]; then
+            echo "ERROR: month_widget_info.xml not found"
+            find . -type f -name '*.xml' | head -50
+            exit 1
+          fi
+          echo "Found file: $FILE"
           sed -i 's|android:description="[^"]*"|android:description="@string/widget_description"|' "$FILE"
-          mkdir -p ShiftCalendar/app/src/main/res/values
-          printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > ShiftCalendar/app/src/main/res/values/widget_strings.xml
+          VALUES_DIR="$(dirname "$(dirname "$FILE")")/values"
+          mkdir -p "$VALUES_DIR"
+          printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > "$VALUES_DIR/widget_strings.xml"
           grep 'android:description=' "$FILE"
 
       - name: Fix widget description
