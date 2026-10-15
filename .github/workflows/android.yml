@@ -32,12 +32,14 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
-
-      - name: Extract project
+      
+      - name: Fix widget description
         run: |
-          unzip -q ShiftCalendar-Android-Project.zip
-          test -f ShiftCalendar/app/build.gradle.kts
-
+          FILE="ShiftCalendar/app/src/main/res/xml/month_widget_info.xml"
+          sed -i 's|android:description="[^"]*"|android:description="@string/widget_description"|' "$FILE"
+          mkdir -p ShiftCalendar/app/src/main/res/values
+          printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > ShiftCalendar/app/src/main/res/values/widget_strings.xml
+          grep 'android:description=' "$FILE"
 
       - name: Fix widget description
         run: |
