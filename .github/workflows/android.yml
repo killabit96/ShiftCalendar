@@ -32,37 +32,62 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
-      
-      
-      - name: Fix widget description
+
+      - name: Extract project
         run: |
-          FILE="$(find . -type f -name 'month_widget_info.xml' -print -quit)"
-          if [ -z "$FILE" ]; then
-            echo "ERROR: month_widget_info.xml not found"
-            find . -type f -name '*.xml' | head -50
+          echo "ZIP archive contents:"
+          unzip -l ShiftCalendar-Android-Project.zip | head -100
+          unzip -oq ShiftCalendar-Android-Project.zip -d extracted
+
+          echo "Searching for Gradle project..."
+          find extracted -type f \( -name 'build.gradle' -o -name 'build.gradle.kts' \)
+
+          APP_GRADLE="$(find extracted -type f -path '*/app/build.gradle.kts' -print -quit)"
+          if [ -z "$APP_GRADLE" ]; then
+            APP_GRADLE="$(find extracted -type f -path '*/app/build.gradle' -print -quit)"
+          fi
+
+          if [ -z "$APP_GRADLE" ]; then
+            echo "ERROR: Android app Gradle file not found."
+            find extracted -maxdepth 6 -type f | head -200
             exit 1
           fi
-          echo "Found file: $FILE"
-          sed -i 's|android:description="[^"]*"|android:description="@string/widget_description"|' "$FILE"
-          VALUES_DIR="$(dirname "$(dirname "$FILE")")/values"
-          mkdir -p "$VALUES_DIR"
-          printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > "$VALUES_DIR/widget_strings.xml"
-          grep 'android:description=' "$FILE"
+
+          PROJECT_DIR="$(dirname "$(dirname "$APP_GRADLE")")"
+          echo "Project directory: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Fix widget description
         run: |
-          sed -i 's|android:description="@string/app_name"|android:description="@string/widget_description"|' ShiftCalendar/app/src/main/res/xml/month_widget_info.xml
-          mkdir -p ShiftCalendar/app/src/main/res/values
-          printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > ShiftCalendar/app/src/main/res/values/widget_strings.xml
+          FILE="$(find "$PROJECT_DIR" -type f -name 'month_widget_info.xml' -print -quit)"
 
+          if [ -z "$FILE" ]; then
+            echo "Widget XML not found. Searching XML files:"
+            find "$PROJECT_DIR" -type f -name '*.xml' | head -100
+            exit 1
+          fi
+
+          echo "Found widget file: $FILE"
+
+          sed -i 's|android:description="[^"]*"|android:description="@string/widget_description"|' "$FILE"
+
+          RES_DIR="$(dirname "$(dirname "$FILE")")"
+          VALUES_DIR="$RES_DIR/values"
+          mkdir -p "$VALUES_DIR"
+
+          printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > "$VALUES_DIR/widget_strings.xml"
+
+          echo "Updated description:"
+          grep 'android:description=' "$FILE"
 
       - name: Build APK
         run: |
-          cd ShiftCalendar
+          cd "$PROJECT_DIR"
           gradle assembleDebug
 
       - name: Save APK
         uses: actions/upload-artifact@v4
         with:
           name: ShiftCalendar-APK
-          path: ShiftCalendar/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
