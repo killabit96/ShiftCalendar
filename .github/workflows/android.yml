@@ -4,7 +4,7 @@ name: Build ShiftCalendar APK
 on:
   push:
     paths:
-      - 'ShiftCalendar-Android-Project.zip'
+      - 'ShiftCalendar-Android-Project1.zip'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -35,7 +35,7 @@ jobs:
 
       - name: Extract project
         run: |
-          unzip -oq ShiftCalendar-Android-Project.zip -d extracted
+          unzip -oq ShiftCalendar-Android-Project1.zip -d extracted
 
           APP_GRADLE="$(find extracted -type f \( -path '*/app/build.gradle.kts' -o -path '*/app/build.gradle' \) -print -quit)"
 
