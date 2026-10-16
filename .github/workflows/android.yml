@@ -37,10 +37,7 @@ jobs:
         run: |
           unzip -oq ShiftCalendar-Android-Project.zip -d extracted
 
-          APP_GRADLE="$(find extracted -type f -path '*/app/build.gradle.kts' -print -quit)"
-          if [ -z "$APP_GRADLE" ]; then
-            APP_GRADLE="$(find extracted -type f -path '*/app/build.gradle' -print -quit)"
-          fi
+          APP_GRADLE="$(find extracted -type f \( -path '*/app/build.gradle.kts' -o -path '*/app/build.gradle' \) -print -quit)"
 
           if [ -z "$APP_GRADLE" ]; then
             echo "ERROR: app Gradle file not found"
@@ -50,16 +47,27 @@ jobs:
 
           PROJECT_DIR="$(dirname "$(dirname "$APP_GRADLE")")"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project: $PROJECT_DIR"
+
+          echo "Project directory: $PROJECT_DIR"
+          echo "App Gradle file: $APP_GRADLE"
 
       - name: Fix widget description
         run: |
           FILE="$(find "$PROJECT_DIR" -type f -name 'month_widget_info.xml' -print -quit)"
+
           if [ -n "$FILE" ]; then
             sed -i 's|android:description="[^"]*"|android:description="@string/widget_description"|' "$FILE"
+
             RES_DIR="$(dirname "$(dirname "$FILE")")"
             mkdir -p "$RES_DIR/values"
-            printf '%s\n' '<resources><string name="widget_description">Месячный календарь смен</string></resources>' > "$RES_DIR/values/widget_strings.xml"
+
+            printf '%s\n' \
+              '<resources><string name="widget_description">Месячный календарь смен</string></resources>' \
+              > "$RES_DIR/values/widget_strings.xml"
+
+            echo "Widget description updated"
+          else
+            echo "Widget description file not found; skipping"
           fi
 
       - name: Fix JVM targets
@@ -70,50 +78,176 @@ jobs:
           import sys
 
           root = pathlib.Path(sys.argv[1])
-          files = list(root.rglob("build.gradle")) + list(root.rglob("build.gradle.kts"))
+
+          files = (
+              list(root.rglob("build.gradle"))
+              + list(root.rglob("build.gradle.kts"))
+          )
 
           for path in files:
               text = path.read_text(encoding="utf-8")
               original = text
 
+              # Set Java source and target compatibility to Java 17.
               text = re.sub(
-                  r'(?m)^(\s*sourceCompatibility\s*=\s*)JavaVersion\.VERSION_1_8\b',
-                  r'\1JavaVersion.VERSION_17',
-                  text
-              )
-              text = re.sub(
-                  r'(?m)^(\s*targetCompatibility\s*=\s*)JavaVersion\.VERSION_1_8\b',
-                  r'\1JavaVersion.VERSION_17',
-                  text
-              )
-              text = re.sub(
-                  r'(?m)^(\s*sourceCompatibility\s*=\s*)JavaVersion\.VERSION_1_8\b',
-                  r'\1JavaVersion.VERSION_17',
+                  r'JavaVersion\.VERSION_1_[78]\b',
+                  'JavaVersion.VERSION_17',
                   text
               )
 
-              if path.name == "build.gradle.kts":
-                  text = re.sub(
-                      r'(?m)^(\s*jvmTarget\s*=\s*)"1\.8"',
-                      r'\1"17"',
-                      text
-                  )
-              else:
-                  text = re.sub(
-                      r'(?m)^(\s*jvmTarget\s*=\s*)["\']1\.8["\']',
-                      r'\1"17"',
-                      text
-                  )
+              text = re.sub(
+                  r'(?m)^(\s*sourceCompatibility\s*=\s*)["\']?1\.[78]["\']?',
+                  r'\g<1>"17"',
+                  text
+              )
+
+              text = re.sub(
+                  r'(?m)^(\s*targetCompatibility\s*=\s*)["\']?1\.[78]["\']?',
+                  r'\g<1>"17"',
+                  text
+              )
+
+              # Kotlin legacy kotlinOptions { jvmTarget = "1.8" }
+              text = re.sub(
+                  r'(?m)^(\s*jvmTarget\s*=\s*)["\']1\.[78]["\']',
+                  r'\g<1>"17"',
+                  text
+              )
+
+              # Kotlin compilerOptions { jvmTarget = JvmTarget.JVM_1_8 }
+              text = re.sub(
+                  r'JvmTarget\.JVM_1_[78]\b',
+                  'JvmTarget.JVM_17',
+                  text
+              )
 
               if text != original:
                   path.write_text(text, encoding="utf-8")
-                  print("Updated JVM settings in", path)
+                  print(f"Updated JVM settings: {path}")
+
+          print("\nGradle files found:")
+          for path in files:
+              print(path)
+          PY
+
+      - name: Enforce JVM 17 for app compilation
+        run: |
+          python3 - "$PROJECT_DIR" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          candidates = [
+              root / "app" / "build.gradle.kts",
+              root / "app" / "build.gradle",
+          ]
+
+          app_gradle = next(
+              (p for p in candidates if p.is_file()),
+              None
+          )
+
+          if app_gradle is None:
+              matches = list(root.glob("*/app/build.gradle.kts"))
+              matches += list(root.glob("*/app/build.gradle"))
+              app_gradle = next(
+                  (p for p in matches if p.is_file()),
+                  None
+              )
+
+          if app_gradle is None:
+              raise SystemExit("ERROR: Cannot locate app Gradle file")
+
+          text = app_gradle.read_text(encoding="utf-8")
+
+          # Update existing Java compatibility values, including 1.8.
+          text = re.sub(
+              r'JavaVersion\.VERSION_1_[78]\b',
+              'JavaVersion.VERSION_17',
+              text
+          )
+
+          # For Kotlin DSL, ensure the app has Java 17 compile options.
+          if app_gradle.name.endswith(".kts"):
+              java_block = """
+          compileOptions {
+              sourceCompatibility = JavaVersion.VERSION_17
+              targetCompatibility = JavaVersion.VERSION_17
+          }
+          """
+
+              if re.search(r'\bcompileOptions\s*\{', text):
+                  pattern = r'compileOptions\s*\{[^{}]*\}'
+                  match = re.search(pattern, text)
+                  if match:
+                      block = match.group(0)
+                      block = re.sub(
+                          r'sourceCompatibility\s*=.*',
+                          'sourceCompatibility = JavaVersion.VERSION_17',
+                          block
+                      )
+                      block = re.sub(
+                          r'targetCompatibility\s*=.*',
+                          'targetCompatibility = JavaVersion.VERSION_17',
+                          block
+                      )
+
+                      if 'sourceCompatibility' not in block:
+                          block = block[:-1] + '\n    sourceCompatibility = JavaVersion.VERSION_17\n}'
+                      if 'targetCompatibility' not in block:
+                          block = block[:-1] + '\n    targetCompatibility = JavaVersion.VERSION_17\n}'
+
+                      text = text[:match.start()] + block + text[match.end():]
+              else:
+                  text = re.sub(
+                      r'\bandroid\s*\{',
+                      lambda m: m.group(0) + java_block,
+                      text,
+                      count=1
+                  )
+
+              # Align legacy Kotlin options if they already exist.
+              text = re.sub(
+                  r'(?m)^(\s*jvmTarget\s*=\s*)["\']1\.[78]["\']',
+                  r'\g<1>"17"',
+                  text
+              )
+
+          else:
+              # Groovy Gradle syntax.
+              java_block = """
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          """
+
+              if not re.search(r'\bcompileOptions\s*\{', text):
+                  text = re.sub(
+                      r'\bandroid\s*\{',
+                      lambda m: m.group(0) + java_block,
+                      text,
+                      count=1
+                  )
+
+          app_gradle.write_text(text, encoding="utf-8")
+          print(f"Updated app Gradle file: {app_gradle}")
+          print("Java 17 compile options applied where possible.")
           PY
 
       - name: Build APK
         run: |
           cd "$PROJECT_DIR"
-          gradle assembleDebug
+
+          echo "=== Java version ==="
+          java -version
+
+          echo "=== Gradle version ==="
+          gradle --version
+
+          echo "=== Build debug APK ==="
+          gradle --no-daemon assembleDebug --stacktrace
 
       - name: Save APK
         uses: actions/upload-artifact@v4
